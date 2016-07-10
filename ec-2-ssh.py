@@ -1,7 +1,28 @@
+"""
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+"""
+
 import argparse
 import re
 import sys
 import fnmatch
+import ConfigParser
+import logging
 import boto3
 
 ami_users = {
@@ -11,6 +32,9 @@ ami_users = {
     'coreos': 'core',
     'datastax': 'ubuntu'
 }
+
+default_config_file='/tmp/ec2sshconfig'
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
 
 class ECInstance:
@@ -44,9 +68,34 @@ class GlobalConfig:
         self.keep_alive = keep_alive
 
 
+class Arguments:
+    def __init__(self, cmdArgs, configArgs):
+        self.profile = cmdArgs.profile
+        self.aws_profile = self.__get_argument(cmdArgs.profile, cmdArgs.aws_profile, configArgs, 'profile')
+        self.tags = self.__get_argument(cmdArgs.profile, cmdArgs.tags, configArgs, 'tags')
+        self.prefix = self.__get_argument(cmdArgs.profile, cmdArgs.prefix, configArgs, 'prefix')
+        self.name_filter = self.__get_argument(cmdArgs.profile, cmdArgs.name_filter, configArgs, 'name_filter')
+        self.proxy = self.__get_argument(cmdArgs.profile, cmdArgs.proxy, configArgs, 'proxy')
+        self.private = self.__get_argument(cmdArgs.profile, cmdArgs.private, configArgs, 'private')
+        self.dynamic_forward = self.__get_argument(cmdArgs.profile, cmdArgs.dynamic_forward, configArgs, 'dynamic_forward')
+        self.key_folder = self.__get_argument(cmdArgs.profile, cmdArgs.key_folder, configArgs, 'key_folder')
+        self.user = self.__get_argument(cmdArgs.profile, cmdArgs.user, configArgs, 'user')
+        self.default_user = self.__get_argument(cmdArgs.profile, cmdArgs.default_user, configArgs, 'default_user')
+        self.no_strict_check = self.__get_argument(cmdArgs.profile, cmdArgs.no_strict_check, configArgs, 'no_strict_check')
+        self.no_host_key_check = self.__get_argument(cmdArgs.profile, cmdArgs.no_host_key_check, configArgs, 'no_host_key_check')
+        self.keep_alive = self.__get_argument(cmdArgs.profile, cmdArgs.keep_alive, configArgs, 'keep_alive')
+
+    def __get_argument(self, section, arg, configArgs, option):
+        if arg:
+            return arg
+        elif configArgs.has_option(section, arg):
+            return configArgs.get(section, option)
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--profile', help='Specify aws credential profile to use')
+    parser.add_argument('--profile', help='Specify ec-2-ssh profile to use')
+    parser.add_argument('--aws-profile', help='Specify aws credential profile to use')
     parser.add_argument('--tags', help='A comma-separated list of tag names to be considered for concatenation. If omitted, all tags will be used')
     parser.add_argument('--prefix', default='', help='Specify a prefix to prepend to all host names')
     parser.add_argument('--name-filter', action='append', help='<tag_name>=<value> to filter instances. Can be called multiple times')
@@ -59,7 +108,6 @@ def parse_arguments():
     parser.add_argument('--no-strict-check', action='store_true', help='Disable strict host key checking')
     parser.add_argument('--no-host-key-check', action='store_true', help='Disable strict host key checking')
     parser.add_argument('--keep-alive', type=int,  help='Disable strict host key checking')
-
     args = parser.parse_args()
     return args
 
@@ -71,17 +119,6 @@ def convert_tags_to_dict(ec2_object):
     for tag in ec2_object.tags:
         tag_dict[tag['Key']] = tag['Value']
     return tag_dict
-
-
-def generate_name(instance, tags, tags_dict):
-    tag_values = []
-    if tags is None:
-        tag_values = tags_dict.values()
-    if tags is not None:
-        for tag in tags.split(','):
-            tag_values += [tags_dict[tag]] if tags_dict.get(tag) is not None else []
-    name = ("-".join(tag_values) if tag_values else instance.id).replace(" ", "-")
-    return name
 
 
 def build_filters(filter_list):
@@ -114,12 +151,29 @@ def fetch_user(ec2, users, image_id, config):
     return users[image_id]
 
 
+def generate_name(instance, tags, tags_dict, existing_names):
+    tag_values = []
+    if tags is None:
+        tag_values = tags_dict.values()
+    if tags is not None:
+        for tag in tags.split(','):
+            tag_values += [tags_dict[tag]] if tags_dict.get(tag) is not None else []
+    name = ("-".join(tag_values) if tag_values else instance.id).replace(" ", "-")
+    if existing_names.get(name):
+        existing_names[name] += 1
+        name += '-' + str(existing_names[name])
+    else:
+        existing_names[name] = 1
+    return name
+
+
 def fetch_instances(ec2, tags, filters, config):
     instances = {}
     user_cache = {}
+    names = {}
     for inst in ec2.instances.filter(Filters=filters):
         tags_dict = convert_tags_to_dict(inst)
-        name = generate_name(inst, tags, tags_dict)
+        name = generate_name(inst, tags, tags_dict, names)
         user = fetch_user(ec2, user_cache, inst.image_id, config)
         instances[name] = ECInstance(name, user, inst.instance_id, inst.image_id, inst.key_name, inst.private_ip_address,
                                      inst.public_ip_address, tags_dict)
@@ -186,8 +240,15 @@ def connect(profile):
     return session.resource('ec2')
 
 
-def main():
+def get_arguments():
     args = parse_arguments()
+    parser = ConfigParser.SafeConfigParser()
+    parser.read(default_config_file)
+    return Arguments(args, parser)
+
+
+def main():
+    args = get_arguments()
     host_config = HostConfig(args.user, args.default_user, args.private, args.dynamic_forward, args.key_folder)
     global_config = GlobalConfig(args.no_strict_check, args.no_host_key_check, args.keep_alive)
     instances = fetch_instances(connect(args.profile), args.tags, build_filters(args.name_filter), host_config)
