@@ -23,6 +23,7 @@ import sys
 import fnmatch
 import ConfigParser
 import logging
+import collections
 import boto3
 
 ami_users = {
@@ -33,8 +34,8 @@ ami_users = {
     'datastax': 'ubuntu'
 }
 
-default_config_file='/tmp/ec2sshconfig'
-logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+default_config_file = '/tmp/ec2sshconfig'
+logging.basicConfig(stream=sys.stderr, level=logging.FATAL)
 
 
 class ECInstance:
@@ -96,7 +97,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('--profile', help='Specify ec-2-ssh profile to use')
     parser.add_argument('--aws-profile', help='Specify aws credential profile to use')
-    parser.add_argument('--tags', help='A comma-separated list of tag names to be considered for concatenation. If omitted, all tags will be used')
+    parser.add_argument('--tags',
+                        help='A comma-separated list of tag names to be considered for concatenation. If omitted, all tags will be used')
     parser.add_argument('--prefix', default='', help='Specify a prefix to prepend to all host names')
     parser.add_argument('--name-filter', action='append', help='<tag_name>=<value> to filter instances. Can be called multiple times')
     parser.add_argument('--proxy', help='name of the proxy server to use')
@@ -107,7 +109,7 @@ def parse_arguments():
     parser.add_argument('--default-user', help='Default ssh username to use if we cannot detect from AMI name')
     parser.add_argument('--no-strict-check', action='store_true', help='Disable strict host key checking')
     parser.add_argument('--no-host-key-check', action='store_true', help='Disable strict host key checking')
-    parser.add_argument('--keep-alive', type=int,  help='Disable strict host key checking')
+    parser.add_argument('--keep-alive', type=int, help='Disable strict host key checking')
     args = parser.parse_args()
     return args
 
@@ -151,7 +153,7 @@ def fetch_user(ec2, users, image_id, config):
     return users[image_id]
 
 
-def generate_name(instance, tags, tags_dict, existing_names):
+def generate_name(instance, tags, tags_dict):
     tag_values = []
     if tags is None:
         tag_values = tags_dict.values()
@@ -159,25 +161,39 @@ def generate_name(instance, tags, tags_dict, existing_names):
         for tag in tags.split(','):
             tag_values += [tags_dict[tag]] if tags_dict.get(tag) is not None else []
     name = ("-".join(tag_values) if tag_values else instance.id).replace(" ", "-")
-    if existing_names.get(name):
-        existing_names[name] += 1
-        name += '-' + str(existing_names[name])
-    else:
-        existing_names[name] = 1
     return name
 
 
-def fetch_instances(ec2, tags, filters, config):
-    instances = {}
+def create_ec2_instances(ec2, instances, names_count, config):
+    used_names = {}
     user_cache = {}
-    names = {}
-    for inst in ec2.instances.filter(Filters=filters):
-        tags_dict = convert_tags_to_dict(inst)
-        name = generate_name(inst, tags, tags_dict, names)
-        user = fetch_user(ec2, user_cache, inst.image_id, config)
-        instances[name] = ECInstance(name, user, inst.instance_id, inst.image_id, inst.key_name, inst.private_ip_address,
-                                     inst.public_ip_address, tags_dict)
-    return instances
+    ec2instances = {}
+    for instance in instances.values():
+        print type(instance)
+        name = instance[0]
+        if names_count[name] > 1:
+            if not used_names.get(name):
+                used_names[name] = 1
+            else:
+                used_names[name] += 1
+            name += '-' + str(used_names[name])
+        ec2instances[name] = ECInstance(name, fetch_user(ec2, user_cache, instance[1].image_id, config), instance[1].instance_id,
+                                        instance[1].image_id, instance[1].key_name, instance[1].private_ip_address,
+                                        instance[1].public_ip_address, instance[2])
+    return ec2instances
+
+
+def fetch_instances(ec2, tags, filters, config):
+    instances_tuple = {}
+    user_cache = {}
+    names_count = {}
+    # create a dictionary of tuples instance_id -> (name, instance, tags_dict)
+    for instance in ec2.instances.filter(Filters=filters):
+        tags_dict = convert_tags_to_dict(instance)
+        name = generate_name(instance, tags, tags_dict)
+        instances_tuple[instance.instance_id] = (name, instance, tags_dict)
+        names_count[name] = names_count[name] + 1 if names_count.get(name) else 1
+    return create_ec2_instances(ec2, instances_tuple, names_count, config)
 
 
 def find_proxy(instances, proxy_name):
@@ -215,8 +231,8 @@ def print_host_config(instance, use_private, key_folder, proxy, dynamic_port, pr
 
 
 def print_all_hosts_config(instances, use_private, key_folder, proxy, dynamic_port, prefix):
-    for instance in instances.itervalues():
-        print_host_config(instance, use_private, key_folder, proxy, dynamic_port, prefix)
+    for name in sorted(instances):
+        print_host_config(instances[name], use_private, key_folder, proxy, dynamic_port, prefix)
         print
 
 
