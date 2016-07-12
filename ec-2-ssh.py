@@ -168,7 +168,6 @@ def create_ec2_instances(ec2, instances, names_count, config):
     user_cache = {}
     ec2instances = {}
     for instance in instances.values():
-        print type(instance)
         name = instance[0]
         if names_count[name] > 1:
             if not used_names.get(name):
@@ -184,7 +183,6 @@ def create_ec2_instances(ec2, instances, names_count, config):
 
 def fetch_instances(ec2, tags, filters, config):
     instances_tuple = {}
-    user_cache = {}
     names_count = {}
     # create a dictionary of tuples instance_id -> (name, instance, tags_dict)
     for instance in ec2.instances.filter(Filters=filters):
@@ -213,19 +211,22 @@ def print_host_config(instance, use_private, key_folder, proxy, dynamic_port, pr
     print 'Host ' + prefix + instance.name
     if use_private:
         print '  HostName ' + instance.private_ip
+        using_private = True
     else:
         if instance.public_ip:
             print '  HostName ' + instance.public_ip
+            using_private = False
         else:
             print '  HostName ' + instance.private_ip
+            using_private = True
     print '  User ' + instance.user
     if instance.key:
         print '  IdentityFile ' + key_folder + instance.key + '.pem'
     if proxy:
-        if instance.name == proxy:
+        if prefix + instance.name == proxy:
             if dynamic_port:
                 print '  DynamicForward ' + str(dynamic_port)
-        else:
+        elif using_private:
             print '  ProxyCommand ssh ' + proxy + ' /bin/nc %h %p 2> /dev/null'
 
 
