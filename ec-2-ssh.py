@@ -23,7 +23,6 @@ import sys
 import fnmatch
 import ConfigParser
 import logging
-import collections
 import boto3
 
 ami_users = {
