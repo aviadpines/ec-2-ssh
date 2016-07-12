@@ -195,7 +195,7 @@ def fetch_instances(ec2, tags, filters, config):
     return create_ec2_instances(ec2, instances_tuple, names_count, config)
 
 
-def find_proxy(instances, proxy_name):
+def find_proxy(instances, proxy_name, prefix):
     if proxy_name is not None:
         proxy = ''
         for inst in instances:
@@ -206,7 +206,7 @@ def find_proxy(instances, proxy_name):
                 proxy = inst
         if not proxy:
             print >> sys.stderr, 'Could not find a proxy! '
-        return proxy
+        return prefix + proxy
 
 
 def print_host_config(instance, use_private, key_folder, proxy, dynamic_port, prefix):
@@ -267,7 +267,7 @@ def main():
     host_config = HostConfig(args.user, args.default_user, args.private, args.dynamic_forward, args.key_folder)
     global_config = GlobalConfig(args.no_strict_check, args.no_host_key_check, args.keep_alive)
     instances = fetch_instances(connect(args.profile), args.tags, build_filters(args.name_filter), host_config)
-    proxy = find_proxy(instances, args.proxy)
+    proxy = find_proxy(instances, args.proxy, args.prefix)
     print_global_config(global_config, args.prefix)
     print_all_hosts_config(instances, args.private, args.key_folder, proxy, args.dynamic_forward, args.prefix)
 
