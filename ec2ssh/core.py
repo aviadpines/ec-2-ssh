@@ -17,13 +17,7 @@ specific language governing permissions and limitations
 under the License.
 """
 
-import argparse
-import re
-import sys
-import fnmatch
-import ConfigParser
-import logging
-import boto3
+import argparse, re, sys, fnmatch, ConfigParser, logging, os, boto3
 
 ami_users = {
     'amzn': 'ec2-user',
@@ -33,7 +27,6 @@ ami_users = {
     'datastax': 'ubuntu'
 }
 
-default_config_file = '/tmp/ec2sshconfig'
 logging.basicConfig(stream=sys.stderr, level=logging.FATAL)
 
 
@@ -52,64 +45,55 @@ class ECInstance:
         return "ECInstance [id:%s, name:%s, user:%s, image_id:%s]" % (self.id, self.name, self.user, self.image_id)
 
 
-class HostConfig:
-    def __init__(self, user, default_user, private, dynamic_forward, key_folder):
-        self.user = user
-        self.default_user = default_user
-        self.private = private
-        self.dynamic_forward = dynamic_forward
-        self.key_folder = key_folder if key_folder.endswith("/") else key_folder + '/'
-
-
-class GlobalConfig:
-    def __init__(self, no_strict_check, no_host_key_check, keep_alive):
-        self.no_strict_check = no_strict_check
-        self.no_host_key_check = no_host_key_check
-        self.keep_alive = keep_alive
-
-
-class Arguments:
-    def __init__(self, cmdArgs, configArgs):
-        self.profile = cmdArgs.profile
-        self.aws_profile = self.__get_argument(cmdArgs.profile, cmdArgs.aws_profile, configArgs, 'profile')
-        self.tags = self.__get_argument(cmdArgs.profile, cmdArgs.tags, configArgs, 'tags')
-        self.prefix = self.__get_argument(cmdArgs.profile, cmdArgs.prefix, configArgs, 'prefix')
-        self.name_filter = self.__get_argument(cmdArgs.profile, cmdArgs.name_filter, configArgs, 'name_filter')
-        self.proxy = self.__get_argument(cmdArgs.profile, cmdArgs.proxy, configArgs, 'proxy')
-        self.private = self.__get_argument(cmdArgs.profile, cmdArgs.private, configArgs, 'private')
-        self.dynamic_forward = self.__get_argument(cmdArgs.profile, cmdArgs.dynamic_forward, configArgs, 'dynamic_forward')
-        self.key_folder = self.__get_argument(cmdArgs.profile, cmdArgs.key_folder, configArgs, 'key_folder')
-        self.user = self.__get_argument(cmdArgs.profile, cmdArgs.user, configArgs, 'user')
-        self.default_user = self.__get_argument(cmdArgs.profile, cmdArgs.default_user, configArgs, 'default_user')
-        self.no_strict_check = self.__get_argument(cmdArgs.profile, cmdArgs.no_strict_check, configArgs, 'no_strict_check')
-        self.no_host_key_check = self.__get_argument(cmdArgs.profile, cmdArgs.no_host_key_check, configArgs, 'no_host_key_check')
-        self.keep_alive = self.__get_argument(cmdArgs.profile, cmdArgs.keep_alive, configArgs, 'keep_alive')
-
-    def __get_argument(self, section, arg, configArgs, option):
-        if arg:
-            return arg
-        elif configArgs.has_option(section, arg):
-            return configArgs.get(section, option)
-
-
+# Credit: http://stackoverflow.com/a/5826167
 def parse_arguments():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--profile', help='Specify ec-2-ssh profile to use')
+    conf_parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False
+    )
+    conf_parser.add_argument('--conf-file', default='/tmp/ec2sshconfig', metavar="FILE", help='Specify config file')
+    conf_parser.add_argument('--profile', help='Specify ec-2-ssh profile to use')
+
+    args, remaining_argv = conf_parser.parse_known_args()
+    defaults = {'prefix': '', 'key_folder' : '~/.ssh/'}
+
+    if args.conf_file:
+        if not os.path.isfile(args.conf_file) :
+            logging.info("conf file %s does not exist", args.conf_file)
+        else:
+            logging.info("using config file %s", args.conf_file)
+            config = ConfigParser.SafeConfigParser()
+            config.read([args.conf_file])
+            file_args = {}
+            if config.has_section(args.profile):
+                for key, value in  dict(config.items(args.profile)).iteritems():
+                    file_args[key.replace('-', '_')] =  value
+                defaults.update(file_args)
+                logging.info('parsed options from conf file: %s', defaults)
+            else:
+                logging.info("could not find profile '%s' in configuration file '%s'", args.profile, args.conf_file)
+
+    parser = argparse.ArgumentParser(parents=[conf_parser])
+    parser.set_defaults(**defaults)
     parser.add_argument('--aws-profile', help='Specify aws credential profile to use')
-    parser.add_argument('--tags',
-                        help='A comma-separated list of tag names to be considered for concatenation. If omitted, all tags will be used')
-    parser.add_argument('--prefix', default='', help='Specify a prefix to prepend to all host names')
+    parser.add_argument('--tags',help='A comma-separated list of tag names to be considered for concatenation. If omitted, all tags will be used')
+    parser.add_argument('--prefix', help='Specify a prefix to prepend to all host names')
     parser.add_argument('--name-filter', action='append', help='<tag_name>=<value> to filter instances. Can be called multiple times')
     parser.add_argument('--proxy', help='name of the proxy server to use')
     parser.add_argument('--private', action='store_true', help='Use only private IP addresses')
     parser.add_argument('--dynamic-forward', type=int, help='Use dynamic forwarding when opening the proxy defined with --proxy')
-    parser.add_argument('--key-folder', default='~/.ssh/', help='Location of the identity files folder')
+    parser.add_argument('--key-folder', help='Location of the identity files folder')
     parser.add_argument('--user', help='Override the ssh username for all hosts')
     parser.add_argument('--default-user', help='Default ssh username to use if we cannot detect from AMI name')
     parser.add_argument('--no-strict-check', action='store_true', help='Disable strict host key checking')
     parser.add_argument('--no-host-key-check', action='store_true', help='Disable strict host key checking')
     parser.add_argument('--keep-alive', type=int, help='Disable strict host key checking')
-    args = parser.parse_args()
+
+    args = parser.parse_args(remaining_argv)
+    logging.info("all args parsed: %s", args)
+    if args.key_folder and not args.key_folder.endswith("/"):
+        args.key_folder += "/"
     return args
 
 
@@ -127,12 +111,7 @@ def build_filters(filter_list):
     filters = []
     for f in name_filters:
         fs = f.split("=", 1)
-        filters.append(
-            {
-                'Name': 'tag:' + fs[0],
-                'Values': [fs[1]]
-            }
-        )
+        filters.append({'Name': 'tag:' + fs[0], 'Values': [fs[1]]})
     return filters + [{'Name': 'instance-state-name', 'Values': ['running']}]
 
 
@@ -147,20 +126,10 @@ def fetch_user(ec2, users, image_id, config):
     if not users.get(image_id):
         if not config.default_user:
             print >> sys.stderr, 'Could not find a user for ami \'' + image_id + '\', please add to dictionary.'
+            users[image_id] = image_id
         else:
             users[image_id] = config.default_user
     return users[image_id]
-
-
-def generate_name(instance, tags, tags_dict):
-    tag_values = []
-    if tags is None:
-        tag_values = tags_dict.values()
-    if tags is not None:
-        for tag in tags.split(','):
-            tag_values += [tags_dict[tag]] if tags_dict.get(tag) is not None else []
-    name = ("-".join(tag_values) if tag_values else instance.id).replace(" ", "-")
-    return name
 
 
 def create_ec2_instances(ec2, instances, names_count, config):
@@ -179,6 +148,17 @@ def create_ec2_instances(ec2, instances, names_count, config):
                                         instance[1].image_id, instance[1].key_name, instance[1].private_ip_address,
                                         instance[1].public_ip_address, instance[2])
     return ec2instances
+
+
+def generate_name(instance, tags, tags_dict):
+    tag_values = []
+    if tags is None:
+        tag_values = tags_dict.values()
+    if tags is not None:
+        for tag in tags.split(','):
+            tag_values += [tags_dict[tag]] if tags_dict.get(tag) is not None else []
+    name = ("-".join(tag_values) if tag_values else instance.id).replace(" ", "-")
+    return name
 
 
 def fetch_instances(ec2, tags, filters, config):
@@ -250,28 +230,27 @@ def print_global_config(global_config, prefix):
 
 def connect(profile):
     if profile:
+        logging.info("connecting to ec2 with profile '%s'", profile)
         session = boto3.Session(profile_name=profile)
     else:
+        logging.info("connecting to ec2 with default profile")
         session = boto3.Session()
     return session.resource('ec2')
 
 
-def get_arguments():
-    args = parse_arguments()
-    parser = ConfigParser.SafeConfigParser()
-    parser.read(default_config_file)
-    return Arguments(args, parser)
+def print_config_file(config, section):
+    options = config.options(section)
+    for option in options:
+        try:
+            logging.info("%s",  option)
+        except:
+            logging.info("exception on %s!", option)
 
 
 def main():
-    args = get_arguments()
-    host_config = HostConfig(args.user, args.default_user, args.private, args.dynamic_forward, args.key_folder)
-    global_config = GlobalConfig(args.no_strict_check, args.no_host_key_check, args.keep_alive)
-    instances = fetch_instances(connect(args.profile), args.tags, build_filters(args.name_filter), host_config)
+    args = parse_arguments()
+    instances = fetch_instances(connect(args.aws_profile), args.tags, build_filters(args.name_filter), args)
     proxy = find_proxy(instances, args.proxy, args.prefix)
-    print_global_config(global_config, args.prefix)
+    print_global_config(args, args.prefix)
     print_all_hosts_config(instances, args.private, args.key_folder, proxy, args.dynamic_forward, args.prefix)
 
-
-if __name__ == '__main__':
-    main()
