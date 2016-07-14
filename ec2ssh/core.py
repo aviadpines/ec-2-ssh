@@ -52,7 +52,7 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False
     )
-    conf_parser.add_argument('--conf-file', default='/tmp/ec2sshconfig', metavar="FILE", help='Specify config file')
+    conf_parser.add_argument('--conf-file', default='/.ec2ssh/credentials', metavar="FILE", help='Specify config file')
     conf_parser.add_argument('--profile', help='Specify ec-2-ssh profile to use')
 
     args, remaining_argv = conf_parser.parse_known_args()
