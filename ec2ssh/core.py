@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -17,7 +19,7 @@ specific language governing permissions and limitations
 under the License.
 """
 
-import argparse, re, sys, fnmatch, ConfigParser, logging, os, boto3
+import cli, re, sys, fnmatch, logging, boto3
 
 ami_users = {
     'amzn': 'ec2-user',
@@ -43,58 +45,6 @@ class ECInstance:
 
     def __str__(self):
         return "ECInstance [id:%s, name:%s, user:%s, image_id:%s]" % (self.id, self.name, self.user, self.image_id)
-
-
-# Credit: http://stackoverflow.com/a/5826167
-def parse_arguments():
-    conf_parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        add_help=False
-    )
-    conf_parser.add_argument('--conf-file', default='/.ec2ssh/credentials', metavar="FILE", help='Specify config file')
-    conf_parser.add_argument('--profile', help='Specify ec-2-ssh profile to use')
-
-    args, remaining_argv = conf_parser.parse_known_args()
-    defaults = {'prefix': '', 'key_folder' : '~/.ssh/'}
-
-    if args.conf_file:
-        if not os.path.isfile(args.conf_file) :
-            logging.info("conf file %s does not exist", args.conf_file)
-        else:
-            logging.info("using config file %s", args.conf_file)
-            config = ConfigParser.SafeConfigParser()
-            config.read([args.conf_file])
-            file_args = {}
-            if config.has_section(args.profile):
-                for key, value in  dict(config.items(args.profile)).iteritems():
-                    file_args[key.replace('-', '_')] =  value
-                defaults.update(file_args)
-                logging.info('parsed options from conf file: %s', defaults)
-            else:
-                logging.info("could not find profile '%s' in configuration file '%s'", args.profile, args.conf_file)
-
-    parser = argparse.ArgumentParser(parents=[conf_parser])
-    parser.set_defaults(**defaults)
-    parser.add_argument('--aws-profile', help='Specify aws credential profile to use')
-    parser.add_argument('--tags',help='A comma-separated list of tag names to be considered for concatenation. If omitted, all tags will be used')
-    parser.add_argument('--prefix', help='Specify a prefix to prepend to all host names')
-    parser.add_argument('--name-filter', action='append', help='<tag_name>=<value> to filter instances. Can be called multiple times')
-    parser.add_argument('--proxy', help='name of the proxy server to use')
-    parser.add_argument('--private', action='store_true', help='Use only private IP addresses')
-    parser.add_argument('--dynamic-forward', type=int, help='Use dynamic forwarding when opening the proxy defined with --proxy')
-    parser.add_argument('--key-folder', help='Location of the identity files folder')
-    parser.add_argument('--user', help='Override the ssh username for all hosts')
-    parser.add_argument('--default-user', help='Default ssh username to use if we cannot detect from AMI name')
-    parser.add_argument('--no-strict-check', action='store_true', help='Disable strict host key checking')
-    parser.add_argument('--no-host-key-check', action='store_true', help='Disable strict host key checking')
-    parser.add_argument('--keep-alive', type=int, help='Disable strict host key checking')
-
-    args = parser.parse_args(remaining_argv)
-    logging.info("all args parsed: %s", args)
-    if args.key_folder and not args.key_folder.endswith("/"):
-        args.key_folder += "/"
-    return args
 
 
 def convert_tags_to_dict(ec2_object):
@@ -248,7 +198,7 @@ def print_config_file(config, section):
 
 
 def main():
-    args = parse_arguments()
+    args = cli.parse_arguments()
     instances = fetch_instances(connect(args.aws_profile), args.tags, build_filters(args.name_filter), args)
     proxy = find_proxy(instances, args.proxy, args.prefix)
     print_global_config(args, args.prefix)
