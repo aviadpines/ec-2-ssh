@@ -19,7 +19,8 @@ specific language governing permissions and limitations
 under the License.
 """
 
-import cli, re, sys, fnmatch, logging, boto3
+import re, sys, fnmatch, logging, boto3
+from cli import CliArgs
 
 ami_users = {
     'amzn': 'ec2-user',
@@ -155,7 +156,7 @@ def print_host_config(instance, use_private, key_folder, proxy, dynamic_port, pr
     if proxy:
         if prefix + instance.name == proxy:
             if dynamic_port:
-                print '  DynamicForward ' + str(dynamic_port)
+                print '  DynamicForward *:' + str(dynamic_port)
         elif using_private:
             print '  ProxyCommand ssh ' + proxy + ' /bin/nc %h %p 2> /dev/null'
 
@@ -198,7 +199,7 @@ def print_config_file(config, section):
 
 
 def main():
-    args = cli.parse_arguments()
+    args = CliArgs()
     instances = fetch_instances(connect(args.aws_profile), args.tags, build_filters(args.name_filter), args)
     proxy = find_proxy(instances, args.proxy, args.prefix)
     print_global_config(args, args.prefix)
