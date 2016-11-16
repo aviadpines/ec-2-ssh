@@ -27,7 +27,8 @@ ami_users = {
     'centos': 'root',
     'ubuntu': 'ubuntu',
     'coreos': 'core',
-    'datastax': 'ubuntu'
+    'datastax': 'ubuntu',
+    'Amazon_CentOS_6-5-x86-64_1.0rev15': 'root'
 }
 
 logging.basicConfig(stream=sys.stderr, level=logging.FATAL)
