@@ -20,7 +20,7 @@ under the License.
 """
 
 import argparse, logging, ConfigParser, os
-
+from os.path import expanduser
 
 class CliArgs:
     def __init__(self):
@@ -42,12 +42,13 @@ class CliArgs:
 
     # Credit: http://stackoverflow.com/a/5826167
     def __parse_arguments(self):
+        home = expanduser("~")
         conf_parser = argparse.ArgumentParser(
             description=__doc__,
             formatter_class=argparse.RawDescriptionHelpFormatter,
             add_help=False
         )
-        conf_parser.add_argument('--conf-file', default='~/.ec2ssh/credentials', metavar="FILE", help='Specify config file')
+        conf_parser.add_argument('--conf-file', default=home + '/.ec2ssh/credentials', metavar="FILE", help='Specify config file')
         conf_parser.add_argument('--profile', help='Specify ec-2-ssh profile to use')
 
         args, remaining_argv = conf_parser.parse_known_args()
