@@ -97,9 +97,12 @@ def create_ec2_instances(ec2, instances, names_count, config):
             else:
                 used_names[name] += 1
             name += '-' + str(used_names[name])
-        ec2instances[name] = ECInstance(name, fetch_user(ec2, user_cache, instance[1].image_id, config), instance[1].instance_id,
+        try:
+            ec2instances[name] = ECInstance(name, fetch_user(ec2, user_cache, instance[1].image_id, config), instance[1].instance_id,
                                         instance[1].image_id, instance[1].key_name, instance[1].private_ip_address,
                                         instance[1].public_ip_address, instance[2])
+        except:
+            print >> sys.stderr, 'Could not obtain instance for {0}!'.format(name)
     return ec2instances
 
 
